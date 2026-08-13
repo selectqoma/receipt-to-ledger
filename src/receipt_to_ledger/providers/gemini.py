@@ -81,9 +81,9 @@ class GeminiClient:
             ) from exc
 
         resolution = self._resolution_for(normalized)
-        media = types.Part(
-            inline_data=types.Blob(mime_type=normalized, data=payload),
-            media_resolution={"level": f"media_resolution_{resolution}"},
+        media = types.Part.from_bytes(data=payload, mime_type=normalized)
+        media_resolution = getattr(
+            types.MediaResolution, f"MEDIA_RESOLUTION_{resolution.upper()}"
         )
         prompt = (
             "Extract this accounting document into the requested schema. The document may be an "
@@ -105,6 +105,7 @@ class GeminiClient:
                 response_mime_type="application/json",
                 response_json_schema=AccountingDocument.model_json_schema(),
                 thinking_config=types.ThinkingConfig(thinking_level=self.thinking_level),
+                media_resolution=media_resolution,
             ),
         )
 
