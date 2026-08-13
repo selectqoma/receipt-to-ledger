@@ -7,3 +7,9 @@ dist/
 build/
 .env
 .DS_Store
+
+# Local evaluation corpora/results (may contain customer data)
+test-docs/
+results/
+data/
+evaluation*.json
