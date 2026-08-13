@@ -19,7 +19,10 @@ def validate_financials(
     failures: list[str] = []
     amounts = document.amounts
 
-    if amounts.subtotal is not None and amounts.tax is not None:
+    if amounts.total is None:
+        failures.append("missing_total")
+
+    if amounts.subtotal is not None and amounts.tax is not None and amounts.total is not None:
         expected = amounts.subtotal + amounts.tax
         if abs(expected - amounts.total) > tolerance:
             failures.append("subtotal_plus_tax_does_not_equal_total")
@@ -27,11 +30,14 @@ def validate_financials(
     if document.due_date and document.issue_date and document.due_date < document.issue_date:
         failures.append("due_date_before_issue_date")
 
-    if document.lines and amounts.subtotal is not None:
-        line_sum = sum(line.total for line in document.lines)
-        # Line totals vary by source: some include tax. Only enforce this check
-        # when line totals look compatible with the extracted subtotal.
-        if abs(line_sum - amounts.subtotal) > tolerance and abs(line_sum - amounts.total) > tolerance:
+    line_totals = [line.total for line in document.lines if line.total is not None]
+    if line_totals and len(line_totals) == len(document.lines):
+        line_sum = sum(line_totals)
+        comparable = [value for value in (amounts.subtotal, amounts.total) if value is not None]
+        if comparable and all(abs(line_sum - value) > tolerance for value in comparable):
             failures.append("line_sum_matches_neither_subtotal_nor_total")
+
+    if document.document_type.value in {"invoice", "credit_note"} and not document.supplier:
+        failures.append("missing_supplier_for_invoice_like_document")
 
     return ValidationResult(ok=not failures, failures=tuple(failures))
