@@ -1,0 +1,40 @@
+{
+  "accounts": [
+    {
+      "account_code": "610100",
+      "label": "Office supplies",
+      "description": "Stationery, printer consumables, small office materials",
+      "examples": ["paper", "pens", "printer ink"]
+    },
+    {
+      "account_code": "611000",
+      "label": "Software subscriptions",
+      "description": "SaaS and recurring software licences used by the business",
+      "examples": ["Adobe", "Notion", "GitHub", "accounting software"]
+    },
+    {
+      "account_code": "611100",
+      "label": "Cloud infrastructure",
+      "description": "Cloud compute, hosting, storage, databases and infrastructure services",
+      "examples": ["AWS", "Azure", "Google Cloud", "DigitalOcean"]
+    },
+    {
+      "account_code": "613500",
+      "label": "Meals and small business expenses",
+      "description": "Business meals, coffee and low-value hospitality expenses",
+      "examples": ["restaurant", "coffee", "lunch"]
+    },
+    {
+      "account_code": "614000",
+      "label": "Travel and transport",
+      "description": "Business train, taxi, public transport, flights and travel-related expenses",
+      "examples": ["Uber", "SNCB", "Eurostar", "airline"]
+    },
+    {
+      "account_code": "615000",
+      "label": "Professional services",
+      "description": "External consulting, legal, design and other professional services",
+      "examples": ["consultant", "lawyer", "freelance designer"]
+    }
+  ]
+}
