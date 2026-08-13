@@ -1,0 +1,8 @@
+EXPENSE NOTE
+Employee: Alex Example
+Date: 2026-08-10
+Business purpose: Client workshop in Antwerp
+Merchant: SNCB/NMBS
+Train Brussels - Antwerp return
+Amount paid: EUR 18.40
+Reimbursable: yes
