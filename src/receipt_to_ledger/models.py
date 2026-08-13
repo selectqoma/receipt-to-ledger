@@ -27,7 +27,7 @@ class MoneyTotals(BaseModel):
 
     subtotal: float | None = None
     tax: float | None = None
-    total: float
+    total: float | None = None
 
 
 class TaxLine(BaseModel):
@@ -44,8 +44,17 @@ class DocumentLine(BaseModel):
     description: str
     quantity: float | None = None
     unit_price: float | None = None
-    total: float
+    total: float | None = None
     tax_rate: float | None = None
+
+
+class LedgerAccount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account_code: str
+    label: str
+    description: str | None = None
+    examples: list[str] = Field(default_factory=list)
 
 
 class CategoryPrediction(BaseModel):
@@ -55,6 +64,28 @@ class CategoryPrediction(BaseModel):
     label: str
     confidence: float = Field(ge=0.0, le=1.0)
     source: str
+    reason: str | None = None
+
+
+class SourceExtraction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: str
+    content_type: str
+    pages: int = Field(ge=1)
+    ocr_pages: int = Field(default=0, ge=0)
+    characters: int = Field(ge=0)
+
+
+class ProviderUsage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    model: str
+    operation: str
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    estimated_cost_usd: float = Field(default=0.0, ge=0.0)
 
 
 class AccountingDocument(BaseModel):
@@ -67,7 +98,7 @@ class AccountingDocument(BaseModel):
     document_number: str | None = None
     issue_date: date | None = None
     due_date: date | None = None
-    currency: str = Field(min_length=3, max_length=3)
+    currency: str = Field(default="XXX", min_length=3, max_length=3)
     business_purpose: str | None = None
     project_code: str | None = None
     reimbursable: bool | None = None
