@@ -12,23 +12,29 @@ For PDFs and images, the default workflow now sends the **original document dire
 
 DeepSeek remains the cheap ledger classifier.
 
-```text
-file
-  ↓
-input router
-  ├─ PDF / image ───────────────→ Gemini 3.6 Flash multimodal extraction ─┐
-  └─ XML / plain text ──────────→ local text decode → DeepSeek extraction ┤
-                                                                         ↓
-                                                               canonical JSON
-                                                                         ↓
-                                                         deterministic validation
-                                                                         ↓
-                                                              DeepSeek V4 Flash
-                                                              account selection
-                                                                         ↓
-                                                         confidence + cost routing
-                                                                         ↓
-                                                                  result JSON
+```mermaid
+flowchart TD
+    A[Input document] --> B{Input type}
+
+    B -->|PDF / image| C[Gemini 3.6 Flash<br/>multimodal extraction]
+    B -->|XML / plain text| D[Local text decode]
+    D --> E[DeepSeek V4 Flash<br/>structured extraction]
+
+    C --> F[Canonical accounting JSON]
+    E --> F
+
+    F --> G[Deterministic validation]
+    G --> H{Chart of accounts supplied?}
+
+    H -->|Yes| I[DeepSeek V4 Flash<br/>ledger categorization]
+    H -->|No| J[Skip categorization]
+
+    I --> K[Confidence + cost routing]
+    J --> K
+    K --> L[Result JSON / human review]
+
+    B -. debug override .-> M[Tesseract / local text extraction]
+    M --> E
 ```
 
 Tesseract is still included as a **debug/fallback path**, not the normal OCR path. `rtl extract-text` lets you inspect what a classic OCR/text pipeline would see, and `--document-provider deepseek-text` lets you compare it against the multimodal route.
