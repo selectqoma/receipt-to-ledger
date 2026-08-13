@@ -294,6 +294,48 @@ rtl process invoice.pdf \
 
 **Important:** category confidence is currently model-reported, not statistically calibrated. Production auto-booking thresholds should come from labeled accountant corrections.
 
+## Estimated cost per document
+
+The current architecture is comfortably below the `$0.15` request ceiling for normal accounting documents. These are **engineering estimates**, not billing guarantees. Actual cost depends mostly on page/image count and Gemini output/thinking tokens.
+
+Current list-price assumptions used by the code:
+
+| Provider/model | Input | Output / thinking |
+|---|---:|---:|
+| Gemini 3.6 Flash | $1.50 / 1M tokens | $7.50 / 1M tokens |
+| Gemini 3.5 Flash-Lite | $0.30 / 1M tokens | $2.50 / 1M tokens |
+| DeepSeek V4 Flash | $0.14 / 1M cache-miss tokens | $0.28 / 1M tokens |
+
+With the repo defaults, Gemini uses `medium` resolution for PDFs and `high` for standalone images. Gemini 3 media token budgets are approximately:
+
+- PDF at `medium`: ~560 vision tokens per page; native embedded PDF text is included for the model but is not billed
+- image at `high`: ~1,120 vision tokens per image
+
+That means the **visual input itself is cheap**: roughly `$0.00084` per PDF page at medium resolution or `$0.00168` for a high-resolution image on Gemini 3.6 Flash. Structured output and thinking generally cost more than the image input.
+
+Reasonable starting estimates for this pipeline:
+
+| Document | Route | Expected API cost |
+|---|---|---:|
+| 1-page PDF invoice | Gemini 3.6 Flash → DeepSeek category | **~$0.005–$0.012** |
+| photographed receipt | Gemini 3.6 Flash → DeepSeek category | **~$0.005–$0.012** |
+| 2–3 page detailed invoice | Gemini 3.6 Flash → DeepSeek category | **~$0.01–$0.03** |
+| 1-page document with Flash-Lite | Gemini 3.5 Flash-Lite → DeepSeek category | **~$0.002–$0.006** |
+| XML/plain-text document | DeepSeek extraction → DeepSeek category | **usually < $0.001** |
+
+A representative one-page Gemini 3.6 Flash request might use roughly `800` billed input tokens (prompt + medium-resolution PDF) and `800` billed output/thinking tokens. That is about `$0.0072` for extraction. A typical DeepSeek categorization call adds roughly `$0.0001–$0.0003`, putting the whole request near **three quarters of a cent**.
+
+These estimates deliberately leave substantial headroom for retries and unusually verbose/complex documents. The CLI reports measured provider token usage and `estimated_cost_usd` for every request, so once we have a real invoice corpus, the README ranges should be replaced by observed p50/p95 costs rather than educated guesses.
+
+The product targets remain:
+
+| Metric | Target |
+|---|---:|
+| p50 processing cost | < $0.01 |
+| average processing cost | < $0.03 |
+| p95 processing cost | < $0.08 |
+| hard per-request guardrail | $0.15 |
+
 ## Cost accounting
 
 Each provider call records:
@@ -320,6 +362,12 @@ export DEEPSEEK_OUTPUT_USD_PER_M="0.28"
 ```
 
 These are configuration, not eternal truths handed down on stone tablets. Re-check provider pricing before using the estimates for billing or margin reporting.
+
+Pricing references checked 2026-08-13:
+
+- Gemini models/pricing: https://ai.google.dev/gemini-api/docs/latest-model
+- Gemini media token budgets: https://ai.google.dev/gemini-api/docs/media-resolution
+- DeepSeek pricing: https://api-docs.deepseek.com/quick_start/pricing/
 
 ## Supported inputs
 
