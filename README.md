@@ -1,176 +1,264 @@
 # receipt-to-ledger
 
-Cost-aware document understanding for accountants:
+A cost-aware base workflow for accountants:
 
-**invoice / receipt / expense note → canonical JSON → validated bookkeeping category**
+**invoice / receipt / credit note / expense note → text/OCR → canonical JSON → validation → expense category**
 
-The design goal is not merely to stay under **$0.15 per request on average**. It is to make normal documents cost roughly **$0.01–$0.03**, reserve expensive models for ambiguous cases, and minimize human review without silently creating accounting errors.
+This is deliberately a runnable CLI prototype before it is a service. Point it at documents, inspect the JSON, collect failures, then add persistence and production infrastructure once the core quality deserves it.
 
-## Core idea
+## What works now
 
-Use a cascade instead of sending every document to one large multimodal model:
+- text PDFs: extract embedded text locally
+- scanned/mixed PDFs: OCR only pages without enough embedded text
+- PNG/JPEG/WebP/etc.: local Tesseract OCR
+- XML/UBL/plain text: pass structured text directly to the LLM
+- DeepSeek OpenAI-compatible API adapter
+- DeepSeek JSON mode for canonical document extraction
+- a separate DeepSeek call for ledger-account categorization
+- deterministic financial validation
+- configurable chart of accounts
+- token usage + conservative estimated API cost
+- `$0.15` request-budget/review guardrail
+- invoices, receipts, credit notes, and employee expense notes
+
+DeepSeek is intentionally **not** the OCR layer. Its API models take text input, so the cheap path is local text/OCR first, then DeepSeek for understanding and classification.
+
+## Pipeline
 
 ```text
-upload
+file
   ↓
-document router
-  ├─ structured invoice/XML (UBL, Factur-X/ZUGFeRD) ─┐
-  ├─ text PDF ----------------------------------------┤
-  └─ scan/photo → OCR / document extraction ----------┤
-                                                     ↓
-                                            canonical JSON
-                                                     ↓
-                                           financial validation
-                                                     ↓
-                                            vendor normalization
-                                                     ↓
-                                client history + cheap classifier
-                                                     ↓
-                                          confidence routing
-                                      ┌──────────────┴──────────────┐
-                                      ↓                             ↓
-                                 auto-accept                   LLM fallback
-                                                                    ↓
-                                                               human review
-                                                                    ↓
-                                                            correction memory
+local document text extractor
+  ├─ XML / text ────────────────────────┐
+  ├─ text PDF → embedded text ----------┤
+  ├─ mixed PDF → text + OCR weak pages -┤
+  └─ image / scan → Tesseract OCR -------┤
+                                        ↓
+                              DeepSeek JSON extraction
+                                        ↓
+                                canonical document
+                                        ↓
+                           deterministic validation
+                                        ↓
+                          DeepSeek account selection
+                                        ↓
+                      confidence + cost review routing
+                                        ↓
+                                  result JSON
 ```
 
-## Supported document classes
+## Quick start
 
-The canonical model is deliberately broader than `Invoice`:
+Requirements:
 
-- invoice
-- receipt
+- Python 3.12+
+- a DeepSeek API key
+- Tesseract if you want to process images or scanned PDF pages
+
+On Debian/Ubuntu:
+
+```bash
+sudo apt-get install tesseract-ocr tesseract-ocr-eng
+```
+
+For Belgian documents, install Dutch/French language packs too if your OS provides them.
+
+Install:
+
+```bash
+git clone https://github.com/selectqoma/receipt-to-ledger.git
+cd receipt-to-ledger
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Configure DeepSeek:
+
+```bash
+export DEEPSEEK_API_KEY="your-key"
+# optional; defaults to deepseek-v4-flash
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+### Check OCR/text extraction without spending API money
+
+```bash
+rtl extract-text path/to/invoice.pdf
+```
+
+For multilingual scans:
+
+```bash
+rtl extract-text path/to/receipt.jpg --ocr-lang nld+fra+eng
+```
+
+### Process + categorize
+
+An example chart is included for testing:
+
+```bash
+rtl process path/to/invoice.pdf \
+  --chart examples/chart_of_accounts.json \
+  --output result.json
+```
+
+Try the included expense note:
+
+```bash
+rtl process examples/sample_expense_note.txt \
+  --chart examples/chart_of_accounts.json
+```
+
+Omit `--chart` to test document extraction/validation without categorization:
+
+```bash
+rtl process path/to/invoice.pdf
+```
+
+### Batch-test different document types
+
+```bash
+mkdir -p results
+for f in test-docs/*; do
+  name="$(basename "$f")"
+  rtl process "$f" \
+    --chart examples/chart_of_accounts.json \
+    --output "results/${name}.json" || true
+done
+```
+
+Useful test cases:
+
+- normal text PDF invoice
+- scanned PDF invoice
+- photographed receipt
 - credit note
-- expense note / employee expense
-- unknown document requiring review
+- employee expense note
+- UBL/XML invoice
+- ugly low-resolution scan
 
-Expense notes may describe spend without all invoice fields. Validation is therefore document-type aware rather than insisting that every piece of paper possesses an invoice number because schemas, unlike humans, should be allowed to notice reality.
+The ugly documents are the useful ones. Perfect invoices mostly test whether computers remain capable of reading text in 2026.
 
-## Why this should be cheap
+## Result shape
 
-1. **Do not OCR structured documents.** Extract embedded XML/text when available.
-2. **OCR only genuine images/scans.**
-3. **Normalize to one internal schema.** Provider-specific output stops at the adapter boundary.
-4. **Use deterministic accounting checks before another model call.**
-5. **Learn vendor/category behavior per client.** Repeat vendors should approach zero AI cost.
-6. **Use a local/cheap classifier for common cases.**
-7. **Send only low-confidence cases to an LLM.** Give it the top candidate ledger accounts rather than the entire chart of accounts.
-8. **Turn accountant corrections into training data.**
-
-See [`docs/architecture.md`](docs/architecture.md) and [`docs/cost-model.md`](docs/cost-model.md).
-
-## Target economics
-
-Engineering targets:
-
-| Metric | Target |
-|---|---:|
-| p50 processing cost | < $0.01 |
-| average processing cost | < $0.03 |
-| p95 processing cost | < $0.08 |
-| hard per-request guardrail | $0.15 |
-
-These are architecture targets, not permanent vendor-price promises. Provider pricing belongs in configuration and should be periodically revalidated.
-
-## Canonical output
-
-Example:
+The CLI returns one JSON object with:
 
 ```json
 {
-  "document_type": "receipt",
-  "supplier": {
-    "name": "Example Coffee BV",
-    "vat_number": "BE0123456789"
+  "document": {},
+  "source": {
+    "method": "pdf_text+tesseract_ocr",
+    "content_type": "application/pdf",
+    "pages": 2,
+    "ocr_pages": 1,
+    "characters": 1340
   },
-  "document_number": null,
-  "issue_date": "2026-08-12",
-  "currency": "EUR",
-  "amounts": {
-    "subtotal": 4.72,
-    "tax": 0.28,
-    "total": 5.00
+  "validation": {
+    "ok": true,
+    "failures": []
   },
-  "lines": [
+  "category": {
+    "account_code": "614000",
+    "label": "Travel and transport",
+    "confidence": 0.91,
+    "source": "deepseek",
+    "reason": "Business train travel"
+  },
+  "review_required": true,
+  "provider_usage": [
     {
-      "description": "Coffee",
-      "quantity": 1,
-      "unit_price": 5.00,
-      "total": 5.00
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash",
+      "operation": "document_extraction",
+      "prompt_tokens": 1700,
+      "completion_tokens": 300,
+      "estimated_cost_usd": 0.000322
     }
   ],
-  "category_prediction": {
-    "account_code": "613500",
-    "label": "Meals and small business expenses",
-    "confidence": 0.96,
-    "source": "client_vendor_history"
-  }
+  "estimated_cost_usd": 0.0005
 }
 ```
 
-The exact account code is tenant-specific. The system must never pretend a global category taxonomy is identical to a client's chart of accounts.
+Actual model output/token counts vary.
 
-## Pipeline contract
+## Review logic
 
-```python
-result = await processor.process(document)
+A result requires review by default if:
 
-# result.document       canonical parsed document
-# result.validation     invariant checks + confidence
-# result.category       predicted ledger account
-# result.review_required
-# result.estimated_cost_usd
+- deterministic validation fails
+- no category is produced
+- category confidence is below `0.95`
+- estimated request cost exceeds `$0.15`
+
+Override thresholds while experimenting:
+
+```bash
+rtl process invoice.pdf \
+  --chart examples/chart_of_accounts.json \
+  --auto-book-threshold 0.90 \
+  --budget-usd 0.15
 ```
 
-## Suggested stack
+**The current confidence is model self-confidence, not calibrated probability.** It is useful for experimentation, not production auto-booking. Calibration should come from real accountant corrections.
 
-- FastAPI
-- PostgreSQL
-- S3-compatible object storage
-- Redis or another durable job queue
-- Pydantic v2
-- OCR/document provider behind an adapter
-- CatBoost or LightGBM for tabular/text-derived classification
-- embeddings only where they materially improve vendor/description matching
-- a small structured-output LLM for ambiguous cases
+## Cost accounting
 
-## Repository layout
+The DeepSeek adapter records prompt/completion tokens and estimates cost from configurable per-million-token rates. Input is priced conservatively as cache-miss input.
 
-```text
-.
-├── docs/
-│   ├── architecture.md
-│   ├── cost-model.md
-│   └── roadmap.md
-├── schemas/
-│   └── accounting_document.schema.json
-├── src/receipt_to_ledger/
-│   ├── __init__.py
-│   ├── models.py
-│   ├── pipeline.py
-│   └── validation.py
-├── tests/
-│   └── test_validation.py
-├── pyproject.toml
-└── README.md
+```bash
+export DEEPSEEK_INPUT_USD_PER_M="0.14"
+export DEEPSEEK_OUTPUT_USD_PER_M="0.28"
 ```
 
-## The moat
+Provider pricing changes. Re-check it before treating these defaults as billing truth.
 
-OCR is infrastructure. The defensible asset is the feedback loop:
+## Supported inputs
 
-```text
-(client, normalized vendor, description, VAT treatment, amount context)
-                               ↓
-                     predicted ledger account
-                               ↓
-                     accountant correction
-                               ↓
-                    tenant-specific memory
-                               ↓
-                 better next prediction
+| Input | Base workflow |
+|---|---|
+| PDF with embedded text | local extraction |
+| scanned/mixed PDF | Tesseract OCR only on weak pages |
+| PNG/JPEG/WebP/etc. | Tesseract OCR |
+| XML / UBL | structured text sent to DeepSeek |
+| plain text | pass through |
+| Factur-X/ZUGFeRD embedded XML | deterministic extraction not implemented yet |
+
+## Chart of accounts
+
+`--chart` accepts an array or `{ "accounts": [...] }`:
+
+```json
+{
+  "accounts": [
+    {
+      "account_code": "611100",
+      "label": "Cloud infrastructure",
+      "description": "Cloud compute, hosting and storage",
+      "examples": ["AWS", "Azure", "Google Cloud"]
+    }
+  ]
+}
 ```
 
-A corrected categorization should become an event, not a destructive overwrite. That gives an auditable history and clean supervised training data.
+The adapter rejects any account code not present in your supplied chart. The model does not get to invent a new ledger because it felt inspired.
+
+## Tests
+
+```bash
+pytest -q
+```
+
+The suite covers validation, text/XML routing, pipeline cost aggregation, and rejection of hallucinated ledger accounts. The implementation was also smoke-tested locally with Tesseract on an image invoice and a scanned PDF.
+
+## Next highest-value work
+
+1. deterministic UBL / Factur-X parsing so structured invoices skip the first LLM call
+2. vendor normalization + tenant-specific categorization memory
+3. persisted accountant corrections
+4. calibrated confidence/evaluation corpus
+5. duplicate detection
+6. VAT/country-specific validation
+7. candidate retrieval for very large charts of accounts
+8. provider/OCR fallbacks
+9. service/API layer after quality is measured
