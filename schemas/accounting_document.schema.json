@@ -1,12 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.local/schemas/accounting_document.schema.json",
   "title": "AccountingDocument",
   "type": "object",
-  "required": ["document_type", "currency", "amounts", "lines"],
+  "additionalProperties": false,
+  "required": ["document_type", "amounts"],
   "properties": {
     "document_type": {
-      "type": "string",
       "enum": ["invoice", "receipt", "credit_note", "expense_note", "unknown"]
     },
     "supplier": {"$ref": "#/$defs/party"},
@@ -15,80 +14,79 @@
     "document_number": {"type": ["string", "null"]},
     "issue_date": {"type": ["string", "null"], "format": "date"},
     "due_date": {"type": ["string", "null"], "format": "date"},
-    "currency": {"type": "string", "minLength": 3, "maxLength": 3},
+    "currency": {"type": "string", "minLength": 3, "maxLength": 3, "default": "XXX"},
     "business_purpose": {"type": ["string", "null"]},
     "project_code": {"type": ["string", "null"]},
     "reimbursable": {"type": ["boolean", "null"]},
-    "amounts": {"$ref": "#/$defs/amounts"},
+    "amounts": {"$ref": "#/$defs/moneyTotals"},
     "tax_breakdown": {
       "type": "array",
-      "items": {"$ref": "#/$defs/taxLine"}
+      "items": {"$ref": "#/$defs/taxLine"},
+      "default": []
     },
     "lines": {
       "type": "array",
-      "items": {"$ref": "#/$defs/line"}
+      "items": {"$ref": "#/$defs/documentLine"},
+      "default": []
     },
     "field_confidence": {
       "type": "object",
-      "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+      "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1},
+      "default": {}
     },
     "category_prediction": {"$ref": "#/$defs/categoryPrediction"}
   },
   "$defs": {
     "party": {
       "type": ["object", "null"],
+      "additionalProperties": false,
       "properties": {
         "name": {"type": ["string", "null"]},
         "vat_number": {"type": ["string", "null"]},
         "address": {"type": ["string", "null"]}
-      },
-      "additionalProperties": false
+      }
     },
-    "amounts": {
+    "moneyTotals": {
       "type": "object",
-      "required": ["total"],
+      "additionalProperties": false,
       "properties": {
         "subtotal": {"type": ["number", "null"]},
         "tax": {"type": ["number", "null"]},
-        "total": {"type": "number"}
-      },
-      "additionalProperties": false
+        "total": {"type": ["number", "null"]}
+      }
     },
     "taxLine": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "rate": {"type": ["number", "null"]},
         "taxable": {"type": ["number", "null"]},
         "tax": {"type": ["number", "null"]}
-      },
-      "additionalProperties": false
+      }
     },
-    "line": {
+    "documentLine": {
       "type": "object",
-      "required": ["description", "total"],
+      "additionalProperties": false,
+      "required": ["description"],
       "properties": {
         "description": {"type": "string"},
         "quantity": {"type": ["number", "null"]},
         "unit_price": {"type": ["number", "null"]},
-        "total": {"type": "number"},
+        "total": {"type": ["number", "null"]},
         "tax_rate": {"type": ["number", "null"]}
-      },
-      "additionalProperties": false
+      }
     },
     "categoryPrediction": {
       "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["account_code", "label", "confidence", "source"],
       "properties": {
         "account_code": {"type": "string"},
         "label": {"type": "string"},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "source": {
-          "type": "string",
-          "enum": ["rule", "client_vendor_history", "classifier", "llm", "human"]
-        }
-      },
-      "required": ["account_code", "label", "confidence", "source"],
-      "additionalProperties": false
+        "source": {"type": "string"},
+        "reason": {"type": ["string", "null"]}
+      }
     }
-  },
-  "additionalProperties": false
+  }
 }
