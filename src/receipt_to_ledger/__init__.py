@@ -1,5 +1,3 @@
-"""Receipt-to-ledger domain package."""
+"""Cost-aware accounting document extraction and expense categorization."""
 
-from .models import AccountingDocument, DocumentType, MoneyTotals
-
-__all__ = ["AccountingDocument", "DocumentType", "MoneyTotals"]
+__version__ = "0.2.0"
