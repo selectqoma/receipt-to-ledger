@@ -74,6 +74,7 @@ class SourceExtraction(BaseModel):
     content_type: str
     pages: int = Field(ge=1)
     ocr_pages: int = Field(default=0, ge=0)
+    vision_pages: int = Field(default=0, ge=0)
     characters: int = Field(ge=0)
 
 
@@ -85,6 +86,7 @@ class ProviderUsage(BaseModel):
     operation: str
     prompt_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
+    thinking_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: float = Field(default=0.0, ge=0.0)
 
 

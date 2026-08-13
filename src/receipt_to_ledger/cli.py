@@ -13,6 +13,7 @@ from .document_text import LocalDocumentTextExtractor
 from .models import LedgerAccount
 from .pipeline import InvoiceProcessor, ProcessingResult
 from .providers.deepseek import DeepSeekCategorizer, DeepSeekClient, DeepSeekDocumentExtractor
+from .providers.gemini import GeminiClient, GeminiDocumentExtractor
 
 
 def _content_type(path: Path) -> str:
@@ -25,6 +26,11 @@ def _content_type(path: Path) -> str:
         ".txt": "text/plain",
         ".json": "application/json",
     }.get(suffix, "application/octet-stream")
+
+
+def _is_visual_document(content_type: str) -> bool:
+    normalized = content_type.split(";", 1)[0].strip().lower()
+    return normalized == "application/pdf" or normalized.startswith("image/")
 
 
 def _load_chart(path: Path) -> list[LedgerAccount]:
@@ -48,14 +54,43 @@ def _result_json(result: ProcessingResult) -> dict[str, Any]:
 
 async def _process(args: argparse.Namespace) -> int:
     path = Path(args.file)
+    payload = path.read_bytes()
+    content_type = _content_type(path)
     chart = _load_chart(Path(args.chart)) if args.chart else []
-    text_extractor = LocalDocumentTextExtractor(
-        tesseract_lang=args.ocr_lang,
-        min_pdf_page_chars=args.min_pdf_page_chars,
+    visual_document = _is_visual_document(content_type)
+
+    use_gemini = args.document_provider == "gemini" or (
+        args.document_provider == "auto" and visual_document
     )
-    client = DeepSeekClient(api_key=args.api_key, model=args.model)
-    extractor = DeepSeekDocumentExtractor(client, text_extractor)
-    categorizer = DeepSeekCategorizer(client, chart) if chart else None
+
+    deepseek_client = None
+    if not use_gemini or chart:
+        deepseek_client = DeepSeekClient(
+            api_key=args.deepseek_api_key,
+            model=args.deepseek_model,
+        )
+
+    if use_gemini:
+        gemini_client = GeminiClient(
+            api_key=args.gemini_api_key,
+            model=args.gemini_model,
+            thinking_level=args.gemini_thinking_level,
+            media_resolution=args.gemini_media_resolution,
+        )
+        extractor = GeminiDocumentExtractor(gemini_client)
+    else:
+        text_extractor = LocalDocumentTextExtractor(
+            tesseract_lang=args.ocr_lang,
+            min_pdf_page_chars=args.min_pdf_page_chars,
+        )
+        assert deepseek_client is not None
+        extractor = DeepSeekDocumentExtractor(deepseek_client, text_extractor)
+
+    categorizer = None
+    if chart:
+        assert deepseek_client is not None
+        categorizer = DeepSeekCategorizer(deepseek_client, chart)
+
     processor = InvoiceProcessor(
         extractor,
         categorizer,
@@ -63,7 +98,7 @@ async def _process(args: argparse.Namespace) -> int:
         request_budget_usd=args.budget_usd,
     )
 
-    result = await processor.process(path.read_bytes(), _content_type(path))
+    result = await processor.process(payload, content_type)
     rendered = json.dumps(_result_json(result), indent=2, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(rendered + "\n", encoding="utf-8")
@@ -88,7 +123,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="receipt-to-ledger")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    text_parser = subparsers.add_parser("extract-text", help="run local PDF/text/OCR extraction")
+    text_parser = subparsers.add_parser(
+        "extract-text", help="run the local PDF/text/Tesseract debug extractor"
+    )
     text_parser.add_argument("file")
     text_parser.add_argument("--ocr-lang", default=os.getenv("TESSERACT_LANG", "eng"))
     text_parser.add_argument("--min-pdf-page-chars", type=int, default=24)
@@ -97,8 +134,44 @@ def build_parser() -> argparse.ArgumentParser:
     process.add_argument("file")
     process.add_argument("--chart", help="JSON chart of accounts; omit to skip categorization")
     process.add_argument("--output", "-o")
-    process.add_argument("--api-key", default=os.getenv("DEEPSEEK_API_KEY"))
-    process.add_argument("--model", default=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"))
+    process.add_argument(
+        "--document-provider",
+        choices=("auto", "gemini", "deepseek-text"),
+        default="auto",
+        help=(
+            "auto: Gemini for PDFs/images and text extraction + DeepSeek for text/XML; "
+            "deepseek-text keeps the old Tesseract/text path"
+        ),
+    )
+    process.add_argument(
+        "--gemini-api-key", default=os.getenv("GEMINI_API_KEY")
+    )
+    process.add_argument(
+        "--gemini-model", default=os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+    )
+    process.add_argument(
+        "--gemini-thinking-level",
+        choices=("minimal", "low", "medium", "high"),
+        default=os.getenv("GEMINI_THINKING_LEVEL", "low"),
+    )
+    process.add_argument(
+        "--gemini-media-resolution",
+        choices=("auto", "low", "medium", "high"),
+        default=os.getenv("GEMINI_MEDIA_RESOLUTION", "auto"),
+        help="auto uses medium for PDFs and high for images",
+    )
+    process.add_argument(
+        "--deepseek-api-key",
+        "--api-key",
+        dest="deepseek_api_key",
+        default=os.getenv("DEEPSEEK_API_KEY"),
+    )
+    process.add_argument(
+        "--deepseek-model",
+        "--model",
+        dest="deepseek_model",
+        default=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+    )
     process.add_argument("--ocr-lang", default=os.getenv("TESSERACT_LANG", "eng"))
     process.add_argument("--min-pdf-page-chars", type=int, default=24)
     process.add_argument("--auto-book-threshold", type=float, default=0.95)

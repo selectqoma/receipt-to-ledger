@@ -2,100 +2,92 @@
 
 A cost-aware base workflow for accountants:
 
-**invoice / receipt / credit note / expense note → text/OCR → canonical JSON → validation → expense category**
+**invoice / receipt / credit note / expense note → multimodal extraction → canonical JSON → validation → expense category**
 
-This is deliberately a runnable CLI prototype before it is a service. Point it at documents, inspect the JSON, collect failures, then add persistence and production infrastructure once the core quality deserves it.
+This is deliberately a runnable CLI prototype before it becomes a service. The current goal is to throw real accounting documents at it, measure field accuracy and cost, and collect failure cases before adding databases, queues, dashboards, and the rest of the infrastructure furniture humans eventually stack around a working function.
 
-## What works now
+## Default architecture
 
-- text PDFs: extract embedded text locally
-- scanned/mixed PDFs: OCR only pages without enough embedded text
-- PNG/JPEG/WebP/etc.: local Tesseract OCR
-- XML/UBL/plain text: pass structured text directly to the LLM
-- DeepSeek OpenAI-compatible API adapter
-- DeepSeek JSON mode for canonical document extraction
-- a separate DeepSeek call for ledger-account categorization
-- deterministic financial validation
-- configurable chart of accounts
-- token usage + conservative estimated API cost
-- `$0.15` request-budget/review guardrail
-- invoices, receipts, credit notes, and employee expense notes
+For PDFs and images, the default workflow now sends the **original document directly to Gemini**. It does not flatten the document through Tesseract first, so the model can use layout, tables, spatial relationships, handwriting, rotation, and the exact visual placement of totals and VAT fields.
 
-DeepSeek is intentionally **not** the OCR layer. Its API models take text input, so the cheap path is local text/OCR first, then DeepSeek for understanding and classification.
-
-## Pipeline
+DeepSeek remains the cheap ledger classifier.
 
 ```text
 file
   ↓
-local document text extractor
-  ├─ XML / text ────────────────────────┐
-  ├─ text PDF → embedded text ----------┤
-  ├─ mixed PDF → text + OCR weak pages -┤
-  └─ image / scan → Tesseract OCR -------┤
-                                        ↓
-                              DeepSeek JSON extraction
-                                        ↓
-                                canonical document
-                                        ↓
-                           deterministic validation
-                                        ↓
-                          DeepSeek account selection
-                                        ↓
-                      confidence + cost review routing
-                                        ↓
-                                  result JSON
+input router
+  ├─ PDF / image ───────────────→ Gemini 3.6 Flash multimodal extraction ─┐
+  └─ XML / plain text ──────────→ local text decode → DeepSeek extraction ┤
+                                                                         ↓
+                                                               canonical JSON
+                                                                         ↓
+                                                         deterministic validation
+                                                                         ↓
+                                                              DeepSeek V4 Flash
+                                                              account selection
+                                                                         ↓
+                                                         confidence + cost routing
+                                                                         ↓
+                                                                  result JSON
 ```
+
+Tesseract is still included as a **debug/fallback path**, not the normal OCR path. `rtl extract-text` lets you inspect what a classic OCR/text pipeline would see, and `--document-provider deepseek-text` lets you compare it against the multimodal route.
+
+## What works now
+
+- PDF invoices and scanned PDFs → Gemini native PDF vision
+- photographed/scanned receipts → Gemini image vision
+- Gemini structured output directly into the canonical Pydantic schema
+- XML/UBL/plain text → local decode + DeepSeek structured extraction
+- DeepSeek V4 Flash ledger-account categorization
+- deterministic financial validation
+- configurable chart of accounts
+- prompt/output/**thinking** token usage and estimated API cost
+- `$0.15` request-budget/review guardrail
+- invoices, receipts, credit notes, and employee expense notes
+- Tesseract local OCR retained for debugging and A/B testing
+
+## Why Gemini is the default vision extractor
+
+The OCR stage is not treated as “turn pixels into a string.” For accounting documents we care about relations such as which number belongs to `TOTAL`, which VAT rate belongs to which base, how line-item columns align, and whether a photographed receipt is rotated or messy.
+
+The default is `gemini-3.6-flash`, a stable multimodal model that accepts image and PDF inputs and supports structured outputs. For cheaper A/B tests, switch to `gemini-3.5-flash-lite` without changing the pipeline.
 
 ## Quick start
 
 Requirements:
 
 - Python 3.12+
-- a DeepSeek API key
-- Tesseract if you want to process images or scanned PDF pages
-
-On Debian/Ubuntu:
-
-```bash
-sudo apt-get install tesseract-ocr tesseract-ocr-eng
-```
-
-For Belgian documents, install Dutch/French language packs too if your OS provides them.
-
-Install:
+- Gemini API key for PDF/image extraction
+- DeepSeek API key for categorization and text/XML extraction
+- Tesseract only if you want the local OCR debug/fallback path
 
 ```bash
 git clone https://github.com/selectqoma/receipt-to-ledger.git
 cd receipt-to-ledger
+
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Configure DeepSeek:
+Configure providers:
 
 ```bash
-export DEEPSEEK_API_KEY="your-key"
-# optional; defaults to deepseek-v4-flash
+export GEMINI_API_KEY="your-google-key"
+export DEEPSEEK_API_KEY="your-deepseek-key"
+```
+
+Defaults:
+
+```bash
+export GEMINI_MODEL="gemini-3.6-flash"
+export GEMINI_THINKING_LEVEL="low"
+export GEMINI_MEDIA_RESOLUTION="auto"  # medium PDFs, high images
 export DEEPSEEK_MODEL="deepseek-v4-flash"
 ```
 
-### Check OCR/text extraction without spending API money
-
-```bash
-rtl extract-text path/to/invoice.pdf
-```
-
-For multilingual scans:
-
-```bash
-rtl extract-text path/to/receipt.jpg --ocr-lang nld+fra+eng
-```
-
-### Process + categorize
-
-An example chart is included for testing:
+### Process a PDF invoice
 
 ```bash
 rtl process path/to/invoice.pdf \
@@ -103,23 +95,91 @@ rtl process path/to/invoice.pdf \
   --output result.json
 ```
 
-Try the included expense note:
+### Process a photographed receipt
+
+```bash
+rtl process path/to/receipt.jpg \
+  --chart examples/chart_of_accounts.json \
+  --output receipt.json
+```
+
+### Process the included expense note
+
+Plain text does not need Gemini. It goes through the text/DeepSeek route:
 
 ```bash
 rtl process examples/sample_expense_note.txt \
   --chart examples/chart_of_accounts.json
 ```
 
-Omit `--chart` to test document extraction/validation without categorization:
+### Extract only, without categorization
+
+For a PDF/image, this needs only `GEMINI_API_KEY`:
 
 ```bash
 rtl process path/to/invoice.pdf
 ```
 
-### Batch-test different document types
+### Compare against the old local OCR route
+
+Install Tesseract, for example on Debian/Ubuntu:
 
 ```bash
-mkdir -p results
+sudo apt-get install tesseract-ocr tesseract-ocr-eng
+```
+
+Inspect local OCR/text extraction without an API call:
+
+```bash
+rtl extract-text path/to/invoice.pdf
+rtl extract-text path/to/receipt.jpg --ocr-lang nld+fra+eng
+```
+
+Run the full pipeline but force the local-text/Tesseract + DeepSeek route:
+
+```bash
+rtl process path/to/receipt.jpg \
+  --document-provider deepseek-text \
+  --ocr-lang nld+fra+eng \
+  --chart examples/chart_of_accounts.json
+```
+
+That is useful for building our own benchmark instead of arguing with generic OCR leaderboards until morale improves.
+
+### Compare Gemini models
+
+Quality-first default:
+
+```bash
+rtl process invoice.pdf \
+  --gemini-model gemini-3.6-flash \
+  --chart examples/chart_of_accounts.json
+```
+
+Cheaper experiment:
+
+```bash
+rtl process invoice.pdf \
+  --gemini-model gemini-3.5-flash-lite \
+  --gemini-thinking-level minimal \
+  --chart examples/chart_of_accounts.json
+```
+
+Gemini's default media-resolution policy in this repo follows Google's current guidance: `medium` for PDFs and `high` for standalone images. Override it when benchmarking:
+
+```bash
+rtl process receipt.jpg \
+  --gemini-media-resolution medium \
+  --chart examples/chart_of_accounts.json
+```
+
+## Batch-test real documents
+
+Create a local corpus that is **not committed** if it contains customer data:
+
+```bash
+mkdir -p test-docs results
+
 for f in test-docs/*; do
   name="$(basename "$f")"
   rtl process "$f" \
@@ -130,68 +190,100 @@ done
 
 Useful test cases:
 
-- normal text PDF invoice
+- pristine born-digital PDF invoice
 - scanned PDF invoice
-- photographed receipt
-- credit note
+- phone photo of a crumpled receipt
+- rotated receipt
+- multilingual Belgian invoice
+- credit note with negative values
 - employee expense note
 - UBL/XML invoice
-- ugly low-resolution scan
+- invoice with several VAT rates
+- invoice with a long line-item table
 
-The ugly documents are the useful ones. Perfect invoices mostly test whether computers remain capable of reading text in 2026.
+For this product, the benchmark that matters is not generic OCR accuracy. Track exact correctness for:
 
-## Result shape
+- supplier name
+- supplier VAT number
+- invoice/document number
+- issue date
+- currency
+- subtotal
+- VAT total
+- grand total
+- VAT breakdown
+- line-item totals/descriptions
+- chosen ledger account
+- review-required decision
+- cost per document
 
-The CLI returns one JSON object with:
+## Result JSON
+
+The CLI emits the accounting result plus operational metadata:
 
 ```json
 {
-  "document": {},
+  "document": {
+    "document_type": "invoice",
+    "supplier": {
+      "name": "Example BV",
+      "vat_number": "BE0123456789",
+      "address": null
+    },
+    "document_number": "INV-2026-1042",
+    "issue_date": "2026-08-01",
+    "currency": "EUR",
+    "amounts": {
+      "subtotal": 100.0,
+      "tax": 21.0,
+      "total": 121.0
+    },
+    "category_prediction": {
+      "account_code": "613200",
+      "label": "Cloud infrastructure",
+      "confidence": 0.96,
+      "source": "deepseek",
+      "reason": "Supplier and line items describe cloud hosting"
+    }
+  },
   "source": {
-    "method": "pdf_text+tesseract_ocr",
+    "method": "gemini_multimodal",
     "content_type": "application/pdf",
-    "pages": 2,
-    "ocr_pages": 1,
-    "characters": 1340
+    "pages": 1,
+    "ocr_pages": 0,
+    "vision_pages": 1,
+    "characters": 0
   },
   "validation": {
     "ok": true,
     "failures": []
   },
-  "category": {
-    "account_code": "614000",
-    "label": "Travel and transport",
-    "confidence": 0.91,
-    "source": "deepseek",
-    "reason": "Business train travel"
-  },
-  "review_required": true,
+  "review_required": false,
   "provider_usage": [
     {
-      "provider": "deepseek",
-      "model": "deepseek-v4-flash",
-      "operation": "document_extraction",
-      "prompt_tokens": 1700,
-      "completion_tokens": 300,
-      "estimated_cost_usd": 0.000322
+      "provider": "gemini",
+      "model": "gemini-3.6-flash",
+      "operation": "multimodal_document_extraction",
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "thinking_tokens": 0,
+      "estimated_cost_usd": 0.0
     }
   ],
-  "estimated_cost_usd": 0.0005
+  "estimated_cost_usd": 0.0
 }
 ```
 
-Actual model output/token counts vary.
+Token values above are placeholders; live API results report real usage.
 
 ## Review logic
 
-A result requires review by default if:
+By default a result requires review when any of these is true:
 
 - deterministic validation fails
 - no category is produced
 - category confidence is below `0.95`
 - estimated request cost exceeds `$0.15`
-
-Override thresholds while experimenting:
 
 ```bash
 rtl process invoice.pdf \
@@ -200,65 +292,45 @@ rtl process invoice.pdf \
   --budget-usd 0.15
 ```
 
-**The current confidence is model self-confidence, not calibrated probability.** It is useful for experimentation, not production auto-booking. Calibration should come from real accountant corrections.
+**Important:** category confidence is currently model-reported, not statistically calibrated. Production auto-booking thresholds should come from labeled accountant corrections.
 
 ## Cost accounting
 
-The DeepSeek adapter records prompt/completion tokens and estimates cost from configurable per-million-token rates. Input is priced conservatively as cache-miss input.
+Each provider call records:
+
+- provider/model
+- operation
+- input/prompt tokens
+- visible output tokens
+- thinking tokens when reported
+- estimated USD cost
+
+Gemini pricing overrides:
+
+```bash
+export GEMINI_INPUT_USD_PER_M="1.50"
+export GEMINI_OUTPUT_USD_PER_M="7.50"
+```
+
+DeepSeek pricing overrides:
 
 ```bash
 export DEEPSEEK_INPUT_USD_PER_M="0.14"
 export DEEPSEEK_OUTPUT_USD_PER_M="0.28"
 ```
 
-Provider pricing changes. Re-check it before treating these defaults as billing truth.
+These are configuration, not eternal truths handed down on stone tablets. Re-check provider pricing before using the estimates for billing or margin reporting.
 
 ## Supported inputs
 
-| Input | Base workflow |
+| Input | Default route |
 |---|---|
-| PDF with embedded text | local extraction |
-| scanned/mixed PDF | Tesseract OCR only on weak pages |
-| PNG/JPEG/WebP/etc. | Tesseract OCR |
-| XML / UBL | structured text sent to DeepSeek |
-| plain text | pass through |
-| Factur-X/ZUGFeRD embedded XML | deterministic extraction not implemented yet |
+| PDF with embedded text | Gemini native PDF understanding |
+| scanned/mixed PDF | Gemini native PDF vision |
+| PNG/JPEG/WebP/etc. | Gemini image vision |
+| XML / UBL | local text decode → DeepSeek |
+| plain text | local text decode → DeepSeek |
+| local OCR comparison | Tesseract via `extract-text` or `--document-provider deepseek-text` |
+| Factur-X/ZUGFeRD embedded XML | not deterministically extracted yet |
 
-## Chart of accounts
-
-`--chart` accepts an array or `{ "accounts": [...] }`:
-
-```json
-{
-  "accounts": [
-    {
-      "account_code": "611100",
-      "label": "Cloud infrastructure",
-      "description": "Cloud compute, hosting and storage",
-      "examples": ["AWS", "Azure", "Google Cloud"]
-    }
-  ]
-}
-```
-
-The adapter rejects any account code not present in your supplied chart. The model does not get to invent a new ledger because it felt inspired.
-
-## Tests
-
-```bash
-pytest -q
-```
-
-The suite covers validation, text/XML routing, pipeline cost aggregation, and rejection of hallucinated ledger accounts. The implementation was also smoke-tested locally with Tesseract on an image invoice and a scanned PDF.
-
-## Next highest-value work
-
-1. deterministic UBL / Factur-X parsing so structured invoices skip the first LLM call
-2. vendor normalization + tenant-specific categorization memory
-3. persisted accountant corrections
-4. calibrated confidence/evaluation corpus
-5. duplicate detection
-6. VAT/country-specific validation
-7. candidate retrieval for very large charts of accounts
-8. provider/OCR fallbacks
-9. service/API layer after quality is measured
+The next structured-document improvement is deterministic UBL/Factur-X mapping so those documents skip extraction-model calls entirely.
