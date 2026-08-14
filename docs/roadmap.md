@@ -26,13 +26,16 @@ Primary metrics:
 - false auto-book rate
 - mean and p95 variable cost
 
+The public CORD benchmark and private JSONL manifest evaluator are already available through `rtl eval`.
+
 ## Phase 1: extraction MVP
 
 - upload API
 - immutable object storage
-- document router
-- native PDF text extraction
-- one OCR/document provider adapter
+- small input router
+- Gemini multimodal document adapter for PDFs/images
+- DeepSeek structured extraction for XML/plain text
+- deterministic UBL / Factur-X mapping where possible
 - canonical Pydantic model
 - financial validation
 - JSON API result

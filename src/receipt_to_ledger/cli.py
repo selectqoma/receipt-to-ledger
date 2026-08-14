@@ -59,18 +59,14 @@ async def _process(args: argparse.Namespace) -> int:
     chart = _load_chart(Path(args.chart)) if args.chart else []
     visual_document = _is_visual_document(content_type)
 
-    use_gemini = args.document_provider == "gemini" or (
-        args.document_provider == "auto" and visual_document
-    )
-
     deepseek_client = None
-    if not use_gemini or chart:
+    if not visual_document or chart:
         deepseek_client = DeepSeekClient(
             api_key=args.deepseek_api_key,
             model=args.deepseek_model,
         )
 
-    if use_gemini:
+    if visual_document:
         gemini_client = GeminiClient(
             api_key=args.gemini_api_key,
             model=args.gemini_model,
@@ -79,12 +75,11 @@ async def _process(args: argparse.Namespace) -> int:
         )
         extractor = GeminiDocumentExtractor(gemini_client)
     else:
-        text_extractor = LocalDocumentTextExtractor(
-            tesseract_lang=args.ocr_lang,
-            min_pdf_page_chars=args.min_pdf_page_chars,
-        )
         assert deepseek_client is not None
-        extractor = DeepSeekDocumentExtractor(deepseek_client, text_extractor)
+        extractor = DeepSeekDocumentExtractor(
+            deepseek_client,
+            LocalDocumentTextExtractor(),
+        )
 
     categorizer = None
     if chart:
@@ -156,19 +151,6 @@ async def _evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _extract_text(args: argparse.Namespace) -> int:
-    path = Path(args.file)
-    extractor = LocalDocumentTextExtractor(
-        tesseract_lang=args.ocr_lang,
-        min_pdf_page_chars=args.min_pdf_page_chars,
-    )
-    result = extractor.extract(path.read_bytes(), _content_type(path))
-    print(json.dumps(result.source.model_dump(mode="json"), indent=2))
-    print("\n--- extracted text ---\n")
-    print(result.text)
-    return 0
-
-
 def _add_gemini_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--gemini-api-key", default=os.getenv("GEMINI_API_KEY"))
     parser.add_argument(
@@ -206,30 +188,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="receipt-to-ledger")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    text_parser = subparsers.add_parser(
-        "extract-text", help="run the local PDF/text/Tesseract debug extractor"
-    )
-    text_parser.add_argument("file")
-    text_parser.add_argument("--ocr-lang", default=os.getenv("TESSERACT_LANG", "eng"))
-    text_parser.add_argument("--min-pdf-page-chars", type=int, default=24)
-
     process = subparsers.add_parser("process", help="extract, validate, and categorize a document")
     process.add_argument("file")
     process.add_argument("--chart", help="JSON chart of accounts; omit to skip categorization")
     process.add_argument("--output", "-o")
-    process.add_argument(
-        "--document-provider",
-        choices=("auto", "gemini", "deepseek-text"),
-        default="auto",
-        help=(
-            "auto: Gemini for PDFs/images and text extraction + DeepSeek for text/XML; "
-            "deepseek-text keeps the old Tesseract/text path"
-        ),
-    )
     _add_gemini_args(process)
     _add_deepseek_args(process)
-    process.add_argument("--ocr-lang", default=os.getenv("TESSERACT_LANG", "eng"))
-    process.add_argument("--min-pdf-page-chars", type=int, default=24)
     process.add_argument("--auto-book-threshold", type=float, default=0.95)
     process.add_argument("--budget-usd", type=float, default=0.15)
 
@@ -256,8 +220,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    if args.command == "extract-text":
-        return _extract_text(args)
     if args.command == "process":
         return asyncio.run(_process(args))
     if args.command == "eval":

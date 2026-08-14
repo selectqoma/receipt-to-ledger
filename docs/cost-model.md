@@ -35,16 +35,16 @@ Illustrative assumptions:
 
 | Route | Share | Typical variable cost |
 |---|---:|---:|
-| Structured XML / embedded data | 15% | $0.001 |
-| Native text PDF | 20% | $0.002 |
-| OCR scan/photo | 60% | $0.010 |
-| Hard fallback/retry | 5% | $0.060 |
+| Structured XML / plain text | 15% | $0.001 |
+| Typical 1-page PDF / image | 70% | $0.008 |
+| Multi-page / complex document | 10% | $0.020 |
+| Hard retry / review edge case | 5% | $0.060 |
 
 Expected extraction-side cost:
 
 ```text
-0.15×0.001 + 0.20×0.002 + 0.60×0.010 + 0.05×0.060
-= $0.00955/request
+0.15×0.001 + 0.70×0.008 + 0.10×0.020 + 0.05×0.060
+= $0.01075/request
 ```
 
 Add classification, DB/queue/storage, and observability and the design can still plausibly operate around $0.01–$0.03/request at useful scale.
@@ -69,7 +69,7 @@ Record by request:
 
 - pages processed
 - route chosen
-- OCR provider/model
+- extraction provider/model
 - model tokens if applicable
 - retries
 - per-stage estimated and actual billed cost where available
@@ -88,4 +88,4 @@ human-review rate
 correction rate after auto-book
 ```
 
-The last two matter more than shaving another tenth of a cent from OCR.
+The last two matter more than shaving another tenth of a cent from extraction.

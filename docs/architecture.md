@@ -14,24 +14,23 @@ The system accepts invoices, receipts, credit notes, and expense notes and retur
 
 Primary constraint: **average end-to-end processing cost below $0.15/request**, with a preferred operating target below $0.03.
 
-Accuracy is a harder requirement than raw OCR quality. A beautifully transcribed wrong total is still a wrong total.
+Accuracy is a harder requirement than raw transcription quality. A beautifully extracted wrong total is still a wrong total.
 
-## 2. Stage A: document router
+## 2. Stage A: input router
 
-Before OCR, inspect the document.
+Keep routing deliberately small:
 
-Routing order:
+1. Machine-readable XML / UBL / plain text → decode locally, then use structured text extraction.
+2. PDFs and images → send the original document directly to the multimodal document extractor.
+3. Malformed or unsupported inputs → reject or route to review rather than guessing.
 
-1. Detect machine-readable accounting payloads such as UBL XML or embedded Factur-X/ZUGFeRD XML.
-2. Extract native text from text PDFs.
-3. Use OCR for image-only PDFs, scans, and photos.
-4. If the document is malformed or unsupported, route to review rather than guessing.
+The current default visual extractor is Gemini. The structured-text path uses DeepSeek until deterministic UBL / Factur-X mapping is implemented.
 
 The router should emit:
 
 ```python
 DocumentRoute(
-    kind="structured_xml" | "text_pdf" | "image" | "unknown",
+    kind="structured_text" | "visual_document" | "unknown",
     document_type_hint="invoice" | "receipt" | "credit_note" | "expense_note" | None,
     page_count=1,
     confidence=0.99,
@@ -85,11 +84,11 @@ Fallback fingerprint:
 supplier identity + issue date + total + currency
 ```
 
-Use fuzzy matching rather than assuming OCR produces identical strings every time.
+Use fuzzy matching rather than assuming extracted strings are identical every time.
 
 ## 5. Stage D: vendor normalization
 
-Resolve noisy OCR names to a stable vendor identity.
+Resolve noisy extracted names to a stable vendor identity.
 
 Signals:
 
